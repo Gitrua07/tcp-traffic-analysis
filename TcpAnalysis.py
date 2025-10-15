@@ -1,5 +1,6 @@
 import struct
 import sys
+import IPPacket
 
 PCAP_FILE = './sample-capture-file.cap'
 
@@ -36,7 +37,13 @@ def getCapFile(file):
                 print("Incomplete packet data")
                 break
             packet_count += 1
+
+            ip_packet = IPPacket.IPPacket.from_bytes(packet_data[14:])
+
+    print(f'ip_packet = {ip_packet}')
     print(f'packet_count: {packet_count}, packet_data: {packet_data}, packet_header: {packet_header}')
+
+    
     return (0,0,0,packet_data)
 
 def getTotalConnections(partA):
