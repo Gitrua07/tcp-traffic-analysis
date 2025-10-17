@@ -1,3 +1,4 @@
+#Credit: CSC 361 Tutorial
 from dataclasses import dataclass
 import struct
 @dataclass
