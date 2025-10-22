@@ -49,15 +49,20 @@ def parseData(partB):
     connections = {}
     num_packets = []
     num_data = []
+    window_sizes = []
+    seq_nums = {}
+    ack_nums = {}
     num_packets_src_dst = 0
     num_packets_dst_src = 0
 
     for ip_packet in partB:
         packet = ip_packet[2]
-
         payload = packet.payload #Get the Packet Data
 
         src_port, dst_port = struct.unpack('!HH', payload[:4])
+        seq_num = struct.unpack('!I', payload[4:8])
+        window_size = struct.unpack('!H', payload[14:16])[0]
+        ack_num = struct.unpack('!I', payload[8:12])[0]
         src_ip = packet.src_ip
         dst_ip = packet.dst_ip
 
@@ -68,16 +73,23 @@ def parseData(partB):
         #Append ip_packets to matching connections
         if connection_to in connections:
             connections[connection_to].append(ip_packet)
+            seq_nums[connection_to].append(seq_num)
+            ack_nums[connection_to].append(ack_num)
             num_packets_src_dst += 1
         elif connection_from in connections:
             connections[connection_from].append(ip_packet)
+            seq_nums[connection_from].append(seq_num)
+            ack_nums[connection_from].append(ack_num)
             num_packets_dst_src += 1
         else:
             connections[connection_to] = [ip_packet]
+            seq_nums[connection_to] = [seq_num]
+            ack_nums[connection_to] = [ack_num]
             #Append final count
             total_num_of_packets = num_packets_dst_src + num_packets_src_dst
             num_p = (num_packets_src_dst, num_packets_dst_src, total_num_of_packets)
             num_packets.append(num_p)
+            window_sizes.append(window_size)
             #Reset num packet count
             num_packets_src_dst = 0
             num_packets_dst_src = 0
@@ -85,6 +97,9 @@ def parseData(partB):
     time_list = []
     num_data = []
     statuses = []
+    data_len = []
+    time_sent_list = {}
+    time_ack_list = {}
     for key, packet in connections.items():
         #Find the time stamp: start time, end time, duration
         time_stamp = [
@@ -98,7 +113,9 @@ def parseData(partB):
 
         times = (start_time, end_time, duration)
         time_list.append(times)
-
+        ack = ack_nums[key]
+        seq = seq_nums[key]
+        index = 0
         #Find number of data bytes
         num_of_data_bytes_src_dst = 0
         num_of_data_bytes_dst_src = 0
@@ -111,7 +128,6 @@ def parseData(partB):
         for usec_time, msec_time, data in packet:
             tcp_segment = data.payload
             flags = tcp_segment[13]
-
             if flags & 0x02:
                 is_syn = True
             if flags & 0x01:
@@ -120,9 +136,15 @@ def parseData(partB):
                 is_ack = True
             if flags & 0x04:
                 is_rst = True
-            
+
+            seq_number = seq[index][0]
+            ack_number = ack[index]
             header_length = (tcp_segment[12] >> 4) * 4
             data_length = len(tcp_segment) - header_length
+            seq_end = data_length + seq_number
+            time_sent_list[seq_end] = usec_time + (msec_time/1_000_000)
+            time_ack_list[ack_number] = usec_time + (msec_time/1_000_000)
+            index += 1
 
             if data.src_ip == key[0] and data.src_ip != key[2]:
                 num_of_data_bytes_src_dst += data_length
@@ -145,8 +167,15 @@ def parseData(partB):
         statuses.append(status)
         total_data_bytes = num_of_data_bytes_dst_src + num_of_data_bytes_src_dst
         num_data.append((num_of_data_bytes_src_dst, num_of_data_bytes_dst_src, total_data_bytes))
-        
-    return (connections, time_list, num_packets, num_data, statuses)
+    
+    rtt_list = []
+    for ack_num, time_ack in time_ack_list.items():
+        for seq_end, time_sent in time_sent_list.items():
+            if ack_num == seq_end:
+                rtt = time_ack - time_sent
+                rtt_list.append(rtt)
+
+    return (connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes)
 
 def getTotalConnections(partA):
     return partA
@@ -197,7 +226,7 @@ def getGeneralInfo(connections, statuses):
     output += f'The number of TCP connections established before the capture started: {is_established}\n'
     return output
 
-def getPartD(partD, time_list):
+def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
     d = [
         duration
         for start_time, end_time, duration in time_list
@@ -211,17 +240,37 @@ def getPartD(partD, time_list):
     output += f'Mean time duration: {max_time_d}\n'
     output += f'Maximum time duration: {mean_time_d}\n'
     output += f'\n'
-    output += f'Mean RTT value: \n'
-    output += f'Maximum RTT value: \n'
-    output += f'Minimum RTT value: \n'
+
+    min_rtt = min(rtt_list)
+    max_rtt = max(rtt_list)
+    mean_rtt = sum(rtt_list)/len(rtt_list)
+
+    output += f'Mean RTT value: {mean_rtt}\n'
+    output += f'Maximum RTT value: {max_rtt}\n'
+    output += f'Minimum RTT value: {min_rtt}\n'
     output += f'\n'
-    output += f'Minimum number of packets including both send/received: \n'        
-    output += f'Mean number of packets including both send/received: \n'
-    output += f'Maximum number of packets including both send/received: \n'
+
+    packet_nums = [
+        num_packets[count][0] + num_packets[count][1]
+        for count in range(0,len(num_packets))
+    ]
+
+    min_packet = min(packet_nums)
+    max_packet = max(packet_nums)
+    mean_packet = sum(packet_nums)/len(packet_nums)
+
+    output += f'Minimum number of packets including both send/received: {min_packet}\n'        
+    output += f'Mean number of packets including both send/received: {mean_packet}\n'
+    output += f'Maximum number of packets including both send/received: {max_packet}\n'
     output += f'\n'
-    output += f'Minimum receive window size including both send/received: \n'
-    output += f'Mean receive window size including both send/received: \n'
-    output += f'Maximum receive window size including both send/received: \n'
+
+    min_window_size = min(window_sizes)
+    max_window_size = max(window_sizes)
+    mean_window_size = sum(window_sizes)/len(window_sizes)
+
+    output += f'Minimum receive window size including both send/received: {min_window_size}\n'
+    output += f'Mean receive window size including both send/received: {max_window_size}\n'
+    output += f'Maximum receive window size including both send/received: {mean_window_size}\n'
 
 
     return output
@@ -245,7 +294,7 @@ def main():
     file = sys.argv[1]
     #Decode file input (Use struct.unpack(format type, file input bytes))
     packet = getCapFile(file)
-    connections, time_list, num_packets, num_data, statuses = parseData(packet)
+    connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes = parseData(packet)
     #Process data for part A
     A = getTotalConnections(len(connections))
     #Process data for part B
@@ -253,9 +302,9 @@ def main():
     #Process data for part C  
     C = getGeneralInfo(connections, statuses)
     #Process data for part D
-    D = getPartD(connections, time_list)
+    D = getPartD(connections, time_list, rtt_list, window_sizes, num_packets)
     #Print all data
-    #printOutput(A, B, C, D)
+    printOutput(A, B, C, D)
 
 if __name__ == "__main__":
     main()
