@@ -197,10 +197,19 @@ def getGeneralInfo(connections, statuses):
     output += f'The number of TCP connections established before the capture started: {is_established}\n'
     return output
 
-def getPartD(partD):
-    output = f'Minimum time duration: \n'
-    output += f'Mean time duration: \n'
-    output += f'Maximum time duration: \n'
+def getPartD(partD, time_list):
+    d = [
+        duration
+        for start_time, end_time, duration in time_list
+    ]
+
+    min_time_d = min(d)
+    max_time_d = max(d)
+    mean_time_d = sum(d)/len(d)
+
+    output = f'Minimum time duration: {min_time_d}\n'
+    output += f'Mean time duration: {max_time_d}\n'
+    output += f'Maximum time duration: {mean_time_d}\n'
     output += f'\n'
     output += f'Mean RTT value: \n'
     output += f'Maximum RTT value: \n'
@@ -244,9 +253,9 @@ def main():
     #Process data for part C  
     C = getGeneralInfo(connections, statuses)
     #Process data for part D
-    D = getPartD(connections)
+    D = getPartD(connections, time_list)
     #Print all data
-    printOutput(A, B, C, D)
+    #printOutput(A, B, C, D)
 
 if __name__ == "__main__":
     main()
