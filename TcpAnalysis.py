@@ -102,6 +102,10 @@ def parseData(partB):
 
     time_sent_list = {}
     time_ack_list = {}
+    is_syn_count = 0
+    is_fin_count = 0
+    is_fin = 0
+    estab_before = 0
     for key, packet in connections.items():
         #Find the time stamp: start time, end time, duration
         time_stamp = [
@@ -122,28 +126,39 @@ def parseData(partB):
         num_of_data_bytes_src_dst = 0
         num_of_data_bytes_dst_src = 0
         total_num_of_data_bytes = 0
-        status = "None"
-        is_syn = False
-        is_ack = False
+        status = ""
         is_rst = False
-        is_fin = False
+        syn_count = 0
+        fin_count = 0
+        syn_cont = []
+        is_data_len = False
         for sec_time, usec_time, data in packet:
             time_stamp = sec_time + (usec_time/1_000_000) 
             tcp_segment = data.payload
             flags = tcp_segment[13]
             if flags & 0x02:
-                is_syn = True
+                syn_count += 1
+                syn_cont.append("SYN")
+            else:
+                syn_cont.append("NO SYN")
             if flags & 0x01:
-                is_fin = True
+                fin_count += 1
+                syn_cont.append("FIN")
             if flags & 0x10:
                 is_ack = True
+                syn_cont.append("ACK")
             if flags & 0x04:
                 is_rst = True
+                syn_cont.append("RST")
 
             seq_number = seq[index][0]
             ack_number = ack[index]
             header_length = (tcp_segment[12] >> 4) * 4
             data_length = len(tcp_segment) - header_length
+            if data_length > 0:
+                is_data_len = True
+            else:
+                is_data_len = False
             seq_end = data_length + seq_number
             #Intializes time sent for both ack and sequence time
             time_sent_list[seq_end] = sec_time + (usec_time/1_000_000) 
@@ -158,30 +173,32 @@ def parseData(partB):
                 if ack_number in time_sent_list:
                     rtt = time_stamp - time_sent_list[ack_number]
                     rtt_list.append(rtt)
+        
 
-        if is_syn & is_fin:
-            status = "SYN + FIN"
-        elif is_rst:
-            status = "RST"
-        elif is_ack & is_fin:
-            status = "ACK + FIN"
-        elif is_ack:
-            status = "ACK"
-        elif is_syn:
-            status = "SYN"
-        else:
-            status = "None"
+        if is_data_len == False:
+            is_fin += 1
+        
+        if syn_cont[0] != 'SYN':
+            estab_before += 1
+
+        status += f'S{syn_count}F{fin_count}'
+        #if is_syn & is_fin:
+         #   status = "SYN + FIN"
+        #elif is_rst:
+         #   status = "RST"
+        #elif is_ack & is_fin:
+         #   status = "ACK + FIN"
+        #elif is_ack:
+         #   status = "ACK"
+        #elif is_syn:
+         #   status = "SYN"
+        #else:
+         #   status = "None"
 
         statuses.append(status)
         total_data_bytes = num_of_data_bytes_dst_src + num_of_data_bytes_src_dst
         num_data.append((num_of_data_bytes_src_dst, num_of_data_bytes_dst_src, total_data_bytes))
-    
-   # for ack_num, time_ack in time_ack_list.items():
-    #    for seq_end, time_sent in time_sent_list.items():
-     #       if ack_num == seq_end:
-      #          rtt = time_ack - time_sent
-       #         rtt_list.append(rtt)
-    return (connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes)
+    return (connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes, is_fin, estab_before)
 
 def getTotalConnections(partA):
     return partA
@@ -197,9 +214,9 @@ def getConnectionsDetails(connections, time_list, num_packets, num_data, statuse
         output += f'Destination Port: {key[3]}\n'
         if statuses[count] == "SYN + FIN":
             output += f'Status: {statuses[count]}\n'
-        output += f'Start Time: {time_list[count][0]}\n'
-        output += f'End Time: {time_list[count][1]}\n'
-        output += f'Duration: {time_list[count][2]}\n'
+        output += f'Start Time: {time_list[count][0]} seconds\n'
+        output += f'End Time: {time_list[count][1]} seconds\n'
+        output += f'Duration: {time_list[count][2]} seconds\n'
         output += f'Number of packets sent from Source to Destination: {num_packets[count][0]}\n'
         output += f'Number of packets sent from Destination to Source: {num_packets[count][1]}\n'
         output += f'Total number of packets: {num_packets[count][2]}\n'
@@ -212,24 +229,20 @@ def getConnectionsDetails(connections, time_list, num_packets, num_data, statuse
         count += 1
     return output
 
-def getGeneralInfo(connections, statuses):
+def getGeneralInfo(connections, statuses, is_fin, estab_before):
     is_complete = 0
     is_reset = 0
-    is_open = 0
-    is_established = 0
+
     for status in statuses:
-        if status == 'SYN + FIN':
+        if ('S1' in status or 'S2' in status) and ('F1' in status or 'F2' in status):
             is_complete += 1
-        if status == 'RST':
+        if 'F0' in status:
             is_reset += 1
-        if status == 'ACK':
-            is_open += 1
-        if status != 'SYN' and status != 'SYN + FIN':
-            is_established += 1
+
     output = f'Total Number of complete TCP Connections: {is_complete}\n'
     output += f'The number of reset TCP connections: {is_reset}\n'
-    output += f'The number of TCP connections that were still open when the trace capture ended: {is_open}\n'
-    output += f'The number of TCP connections established before the capture started: {is_established}\n'
+    output += f'The number of TCP connections that were still open when the trace capture ended: {is_fin}\n'
+    output += f'The number of TCP connections established before the capture started: {estab_before}\n'
     return output
 
 def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
@@ -243,11 +256,11 @@ def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
     mean_time_d = sum(d)/len(d)
 
     output = f'Minimum time duration: {min_time_d}\n'
-    output += f'Mean time duration: {max_time_d}\n'
-    output += f'Maximum time duration: {mean_time_d}\n'
+    output += f'Mean time duration: {mean_time_d}\n'
+    output += f'Maximum time duration: {max_time_d}\n'
     output += f'\n'
 
-    min_rtt = min(rtt_list) #Something wrong
+    min_rtt = min(rtt_list)
     max_rtt = max(rtt_list)
     mean_rtt = sum(rtt_list)/len(rtt_list)
 
@@ -275,8 +288,8 @@ def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
     mean_window_size = sum(window_sizes)/len(window_sizes)
 
     output += f'Minimum receive window size including both send/received: {min_window_size}\n'
-    output += f'Mean receive window size including both send/received: {max_window_size}\n'
-    output += f'Maximum receive window size including both send/received: {mean_window_size}\n'
+    output += f'Mean receive window size including both send/received: {mean_window_size}\n'
+    output += f'Maximum receive window size including both send/received: {max_window_size}\n'
 
 
     return output
@@ -286,27 +299,27 @@ def printOutput(A, B, C, D):
    # print(f'A) Total number of connections:\n --------------------------------\n')
    # print(A)
     #Part B
-   # print(f"\nB) Connections' details: \n --------------------------------\n")
+    #print(f"\nB) Connections' details: \n --------------------------------\n")
    # print(B)
     #Part C
-   # print(f'\nC) General: \n --------------------------------\n')
-    print(C)
+    #print(f'\nC) General: \n --------------------------------\n')
+    #print(C)
     #Part D
    # print(f'\nD) Complete TCP connections: \n --------------------------------\n')
-   # print(D)
+    print(D)
 
 def main():
     #Get file input (tracefile)
     file = sys.argv[1]
     #Decode file input (Use struct.unpack(format type, file input bytes))
     packet = getCapFile(file)
-    connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes = parseData(packet)
+    connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes, is_fin, estab_before = parseData(packet)
     #Process data for part A
     A = getTotalConnections(len(connections))
     #Process data for part B
     B = getConnectionsDetails(connections, time_list, num_packets, num_data, statuses)
     #Process data for part C  
-    C = getGeneralInfo(connections, statuses)
+    C = getGeneralInfo(connections, statuses, is_fin, estab_before)
     #Process data for part D
     D = getPartD(connections, time_list, rtt_list, window_sizes, num_packets)
     #Print all data
