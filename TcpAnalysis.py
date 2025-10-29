@@ -98,6 +98,8 @@ def parseData(partB):
     num_data = []
     statuses = []
     data_len = []
+    rtt_list = []
+
     time_sent_list = {}
     time_ack_list = {}
     for key, packet in connections.items():
@@ -125,7 +127,8 @@ def parseData(partB):
         is_ack = False
         is_rst = False
         is_fin = False
-        for usec_time, msec_time, data in packet:
+        for sec_time, usec_time, data in packet:
+            time_stamp = sec_time + (usec_time/1_000_000) 
             tcp_segment = data.payload
             flags = tcp_segment[13]
             if flags & 0x02:
@@ -142,14 +145,19 @@ def parseData(partB):
             header_length = (tcp_segment[12] >> 4) * 4
             data_length = len(tcp_segment) - header_length
             seq_end = data_length + seq_number
-            time_sent_list[seq_end] = usec_time + (msec_time/1_000_000)
-            time_ack_list[ack_number] = usec_time + (msec_time/1_000_000)
+            #Intializes time sent for both ack and sequence time
+            time_sent_list[seq_end] = sec_time + (usec_time/1_000_000) 
+            time_ack_list[ack_number] = sec_time + (usec_time/1_000_000)
             index += 1
 
             if data.src_ip == key[0] and data.src_ip != key[2]:
+                time_sent_list[seq_end] = time_stamp
                 num_of_data_bytes_src_dst += data_length
             else: 
                 num_of_data_bytes_dst_src += data_length
+                if ack_number in time_sent_list:
+                    rtt = time_stamp - time_sent_list[ack_number]
+                    rtt_list.append(rtt)
 
         if is_syn & is_fin:
             status = "SYN + FIN"
@@ -168,13 +176,11 @@ def parseData(partB):
         total_data_bytes = num_of_data_bytes_dst_src + num_of_data_bytes_src_dst
         num_data.append((num_of_data_bytes_src_dst, num_of_data_bytes_dst_src, total_data_bytes))
     
-    rtt_list = []
-    for ack_num, time_ack in time_ack_list.items():
-        for seq_end, time_sent in time_sent_list.items():
-            if ack_num == seq_end:
-                rtt = time_ack - time_sent
-                rtt_list.append(rtt)
-
+   # for ack_num, time_ack in time_ack_list.items():
+    #    for seq_end, time_sent in time_sent_list.items():
+     #       if ack_num == seq_end:
+      #          rtt = time_ack - time_sent
+       #         rtt_list.append(rtt)
     return (connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes)
 
 def getTotalConnections(partA):
@@ -241,7 +247,7 @@ def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
     output += f'Maximum time duration: {mean_time_d}\n'
     output += f'\n'
 
-    min_rtt = min(rtt_list)
+    min_rtt = min(rtt_list) #Something wrong
     max_rtt = max(rtt_list)
     mean_rtt = sum(rtt_list)/len(rtt_list)
 
@@ -277,17 +283,17 @@ def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
 
 def printOutput(A, B, C, D):
     #Part A
-    print(f'A) Total number of connections:\n --------------------------------\n')
-    print(A)
+   # print(f'A) Total number of connections:\n --------------------------------\n')
+   # print(A)
     #Part B
-    print(f"\nB) Connections' details: \n --------------------------------\n")
-    print(B)
+   # print(f"\nB) Connections' details: \n --------------------------------\n")
+   # print(B)
     #Part C
-    print(f'\nC) General: \n --------------------------------\n')
+   # print(f'\nC) General: \n --------------------------------\n')
     print(C)
     #Part D
-    print(f'\nD) Complete TCP connections: \n --------------------------------\n')
-    print(D)
+   # print(f'\nD) Complete TCP connections: \n --------------------------------\n')
+   # print(D)
 
 def main():
     #Get file input (tracefile)
