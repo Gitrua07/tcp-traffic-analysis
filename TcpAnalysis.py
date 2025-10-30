@@ -2,8 +2,6 @@ import struct
 import sys
 import IPPacket
 
-PCAP_FILE = './sample-capture-file.cap'
-
 def getCapFile(file):
     """
     Parses cap file provided by PCAP_FILE
@@ -13,7 +11,7 @@ def getCapFile(file):
     """
     #parse using struct
     ip_packet_list = []
-    with open(PCAP_FILE, 'rb') as f:
+    with open(file, 'rb') as f:
         #Reads TCP Header
         global_header = f.read(24) #Retrieves global header
         if len(global_header) < 24: #If global header is less than 24 bytes
