@@ -47,14 +47,11 @@ def getCapFile(file):
 
 def parseData(partB):
     connections = {}
-    num_packets = []
     num_data = []
     window_sizes = []
     seq_nums = {}
     ack_nums = {}
-    num_packets_src_dst = 0
-    num_packets_dst_src = 0
-
+    packets_count = {}
     for ip_packet in partB:
         packet = ip_packet[2]
         payload = packet.payload #Get the Packet Data
@@ -69,30 +66,27 @@ def parseData(partB):
         #Establish both direction connections
         connection_to = (src_ip, src_port, dst_ip, dst_port)
         connection_from = (dst_ip, dst_port, src_ip, src_port) 
+        
+        if connection_to not in packets_count and connection_from not in packets_count:
+            packets_count[connection_to] = [1,0]
 
         #Append ip_packets to matching connections
         if connection_to in connections:
             connections[connection_to].append(ip_packet)
             seq_nums[connection_to].append(seq_num)
             ack_nums[connection_to].append(ack_num)
-            num_packets_src_dst += 1
+            packets_count[connection_to][0] += 1
         elif connection_from in connections:
             connections[connection_from].append(ip_packet)
             seq_nums[connection_from].append(seq_num)
             ack_nums[connection_from].append(ack_num)
-            num_packets_dst_src += 1
+            packets_count[connection_from][1] += 1
         else:
             connections[connection_to] = [ip_packet]
             seq_nums[connection_to] = [seq_num]
             ack_nums[connection_to] = [ack_num]
             #Append final count
-            total_num_of_packets = num_packets_dst_src + num_packets_src_dst
-            num_p = (num_packets_src_dst, num_packets_dst_src, total_num_of_packets)
-            num_packets.append(num_p)
             window_sizes.append(window_size)
-            #Reset num packet count
-            num_packets_src_dst = 0
-            num_packets_dst_src = 0
     
     time_list = []
     num_data = []
@@ -106,13 +100,14 @@ def parseData(partB):
     is_fin_count = 0
     is_fin = 0
     estab_before = 0
+    first_time = partB[0][0] + (partB[0][1]/1_000_000)
     for key, packet in connections.items():
         #Find the time stamp: start time, end time, duration
         time_stamp = [
-            sec_time + (usec_time/1_000_000)
+            sec_time + (usec_time/1_000_000) - first_time
             for sec_time, usec_time, data in packet
         ]
-
+        print(key, time_stamp[:5], time_stamp[-5:])
         start_time = min(time_stamp)
         end_time = max(time_stamp)
         duration = end_time - start_time
@@ -147,9 +142,6 @@ def parseData(partB):
             if flags & 0x10:
                 is_ack = True
                 syn_cont.append("ACK")
-            if flags & 0x04:
-                is_rst = True
-                syn_cont.append("RST")
 
             seq_number = seq[index][0]
             ack_number = ack[index]
@@ -173,7 +165,11 @@ def parseData(partB):
                 if ack_number in time_sent_list:
                     rtt = time_stamp - time_sent_list[ack_number]
                     rtt_list.append(rtt)
-        
+            
+            if flags & 0x04:
+                is_rst = True
+                syn_cont.append("RST")
+                break
 
         if is_data_len == False:
             is_fin += 1
@@ -182,23 +178,20 @@ def parseData(partB):
             estab_before += 1
 
         status += f'S{syn_count}F{fin_count}'
-        #if is_syn & is_fin:
-         #   status = "SYN + FIN"
-        #elif is_rst:
-         #   status = "RST"
-        #elif is_ack & is_fin:
-         #   status = "ACK + FIN"
-        #elif is_ack:
-         #   status = "ACK"
-        #elif is_syn:
-         #   status = "SYN"
-        #else:
-         #   status = "None"
+
+        if is_rst:
+            status += " R"
 
         statuses.append(status)
         total_data_bytes = num_of_data_bytes_dst_src + num_of_data_bytes_src_dst
         num_data.append((num_of_data_bytes_src_dst, num_of_data_bytes_dst_src, total_data_bytes))
-    return (connections, time_list, num_packets, num_data, statuses, rtt_list, window_sizes, is_fin, estab_before)
+
+    nums_packet = []
+    for key, (src, dst) in packets_count.items():
+        total = src + dst
+        nums_packet.append((src, dst, total))
+
+    return (connections, time_list, nums_packet, num_data, statuses, rtt_list, window_sizes, is_fin, estab_before)
 
 def getTotalConnections(partA):
     return partA
@@ -232,16 +225,19 @@ def getConnectionsDetails(connections, time_list, num_packets, num_data, statuse
 def getGeneralInfo(connections, statuses, is_fin, estab_before):
     is_complete = 0
     is_reset = 0
+    is_open = 0
 
     for status in statuses:
         if ('S1' in status or 'S2' in status) and ('F1' in status or 'F2' in status):
             is_complete += 1
-        if 'F0' in status:
+        if status in ('S1F0 R', 'S1F1 R', 'S1F2 R', 'S2F1 R', 'S2F2 R', 'S3F0 R'):
             is_reset += 1
+        if status in ('S1F0', 'S2F0', 'S3F0') and status not in 'R':
+            is_open += 1
 
     output = f'Total Number of complete TCP Connections: {is_complete}\n'
     output += f'The number of reset TCP connections: {is_reset}\n'
-    output += f'The number of TCP connections that were still open when the trace capture ended: {is_fin}\n'
+    output += f'The number of TCP connections that were still open when the trace capture ended: {is_open}\n'
     output += f'The number of TCP connections established before the capture started: {estab_before}\n'
     return output
 
@@ -296,17 +292,17 @@ def getPartD(partD, time_list, rtt_list, window_sizes, num_packets):
 
 def printOutput(A, B, C, D):
     #Part A
-   # print(f'A) Total number of connections:\n --------------------------------\n')
-   # print(A)
+    print(f'A) Total number of connections:\n --------------------------------\n')
+    print(A)
     #Part B
-    #print(f"\nB) Connections' details: \n --------------------------------\n")
-   # print(B)
+    print(f"\nB) Connections' details: \n --------------------------------\n")
+    print(B)
     #Part C
-    #print(f'\nC) General: \n --------------------------------\n')
-    #print(C)
+    print(f'\nC) General: \n --------------------------------\n')
+    print(C)
     #Part D
    # print(f'\nD) Complete TCP connections: \n --------------------------------\n')
-    print(D)
+    #print(D)
 
 def main():
     #Get file input (tracefile)
